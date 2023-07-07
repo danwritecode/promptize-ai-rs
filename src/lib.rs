@@ -13,39 +13,31 @@ const CHUNKABLE_ATTRIBUTE_NAME: &str = "chunkable";
 #[proc_macro_derive(Promptize, attributes(chunkable, prompt))]
 pub fn promptize(input: TokenStream) -> TokenStream {
     let input_ast = parse_macro_input!(input as DeriveInput);
-    let name = &input_ast.ident;
+    let struct_name = &input_ast.ident;
 
-    // println!("ast: {:#?}", input_ast);
-
-    let fields = if let syn::Data::Struct(syn::DataStruct { 
-        fields: syn::Fields::Named(syn::FieldsNamed { 
-            ref named, 
-            ..
-        }), 
-        ..
-    }) = input_ast.data {
-        named 
-    } else {
-        let error = syn::Error::new(name.span(), "Proc Macro only supports Structs");
-        return error.to_compile_error().into();
+    let fields = match get_fields(&input_ast, struct_name) {
+        Ok(fields) => fields,
+        Err(err) => return err,
     };
 
-
     // field validation
-    let struct_valid = validate_fields(name, fields.clone());
-    if let Err(err) = struct_valid { return err; };
-
-    let chunk_field = get_chunkable_fields(name, CHUNKABLE_ATTRIBUTE_NAME, fields.clone());
-    if let Err(err) = chunk_field { return err; };
-
-
-
-    // Assemble required fields for prompt building
-    let chunk_field = chunk_field.unwrap();
+    match validate_fields(struct_name, fields.clone()) {
+        Ok(valid) => valid,
+        Err(err) => return err,
+    };
+    
+    // assemble fields
+    let chunk_field = match get_chunkable_fields(struct_name, CHUNKABLE_ATTRIBUTE_NAME, fields.clone()) {
+        Ok(chunk_field) => chunk_field,
+        Err(err) => return err,
+    };
     let cf_name = &chunk_field.ident;
+    let cf_type = &chunk_field.ty;
 
-    // TODO: Make both of these return results to be consistent with above pattern
     let standard_fields = get_standard_fields(fields.clone());
+    
+    // TODO: Figure out how the hell to put these into a function
+    // The return type is wild, no idea how to handle it
     let standard_fields_template = standard_fields.iter().map(|f| {
         let name = &f.ident;
         quote! {
@@ -67,29 +59,19 @@ pub fn promptize(input: TokenStream) -> TokenStream {
         format!(stringify!(#(#fmt_string_braces)*), #(self.#standard_fields_template.clone().unwrap()),*)
     };
 
-    let user_prompt_field = get_field_by_name(fields.clone(), USER_PROMPT_FIELD_NAME);
-    let user_prompt_field = &user_prompt_field.ident;
+    let user_prompt_field = match get_field_ident_by_name(struct_name, fields.clone(), USER_PROMPT_FIELD_NAME) {
+        Ok(field) => field,
+        Err(err) => return err,
+    };
 
-    let system_prompt_field = get_field_by_name(fields.clone(), SYSTEM_PROMPT_FIELD_NAME);
-    let system_prompt_field = &system_prompt_field.ident;
-
-
+    let system_prompt_field = match get_field_ident_by_name(struct_name, fields.clone(), SYSTEM_PROMPT_FIELD_NAME) {
+        Ok(field) => field,
+        Err(err) => return err,
+    };
 
     // build fields
-    let builder_name = format!("{}Builder", name); 
-    let builder_ident = syn::Ident::new(&builder_name, name.span());
-
-    fn is_optional(field: &syn::Field) -> bool {
-        if let syn::Type::Path(t_path) = &field.ty {
-            let segments = &t_path.path.segments;
-            if segments.len() == 1 && segments[0].ident == "Option" {
-                return true
-            }
-            return false
-        } else {
-            panic!("unsupported type path")
-        }
-    }
+    let builder_name = format!("{}Builder", struct_name); 
+    let builder_ident = syn::Ident::new(&builder_name, struct_name.span());
 
     let template_fields = fields.iter().map(|f| {
         let name = &f.ident;
@@ -156,71 +138,70 @@ pub fn promptize(input: TokenStream) -> TokenStream {
             > {
                 let prompt_string = serde_json::to_string(&self)?;
                 let total_prompt_tokens: i32 = get_prompt_tokens(model, &prompt_string)?.try_into()?;
+                let chunk_field = self.#cf_name.clone().ok_or(concat!(stringify!(#struct_name), " is not set"))?;
 
-                if total_prompt_tokens > token_limit {
-                    let chunk_field = self.#cf_name.clone().ok_or(concat!(stringify!(#name), " is not set"))?;
-                    let chunkable_field_tokens: i32 = get_prompt_tokens(model, &chunk_field)?.try_into()?;
-                    
-                    // this represents the tokens left after non chunkable fields are removed
-                    // since non chunkable fields cannot be changed, this is our "real" limit
-                    let chunkable_tokens_remaining = token_limit - (total_prompt_tokens - chunkable_field_tokens);
-                    
-                    let chunk_size_tokens = get_chunk_size_tokens(chunkable_field_tokens, chunkable_tokens_remaining);
-                    let num_chunks: i32 = (chunkable_field_tokens as f64 / chunk_size_tokens as f64) as i32;
-
-                    if num_chunks > maximum_chunk_count {
-                        return Err("Number of chunks exceeds the maximum allowed chunk count".into());
-                    }
-
-                    let chunk_ratio = chunk_size_tokens as f64 / chunkable_field_tokens as f64;
-                    let total_chars = prompt_string.chars().collect::<Vec<char>>().len();
-                    let chunk_size_chars:i32 = (chunk_ratio * total_chars as f64).ceil() as i32;
-
-                    let string_chunks = chunk_string(prompt_string, chunk_size_chars);
-
-                    let prompts: Vec<Vec<tiktoken_rs::ChatCompletionRequestMessage>> = string_chunks
-                        .iter()
-                        .map(|c| {
-                            let mut prompt = vec![];
-                            let system = tiktoken_rs::ChatCompletionRequestMessage {
-                                role: "system".to_string(),
-                                content: self.system_prompt.clone().unwrap(),
-                                name: None
-                            };
-
-                            let user = tiktoken_rs::ChatCompletionRequestMessage {
-                                role: "user".to_string(),
-                                content: format!("{}, {}, {}: {}", self.#user_prompt_field.clone().unwrap(), #std_fields_fmt_template, stringify!(#cf_name), c.clone()),
-                                name: None
-                            };
-
-                            prompt.push(system);
-                            prompt.push(user);
-                            prompt
-                        })
-                        .collect();
-
-                    return Ok(prompts);
-                }
-                    
-                // TODO: Maybe do this right?
-                let system = tiktoken_rs::ChatCompletionRequestMessage {
+                let prompts = match total_prompt_tokens > token_limit {
+                    true => self.build_chunked_prompt(model, token_limit, maximum_chunk_count, chunk_field, prompt_string, total_prompt_tokens)?,
+                    false => self.build_single_prompt()
+                };
+                
+                Ok(prompts)
+            }
+            
+            fn create_system_prompt(&self) -> tiktoken_rs::ChatCompletionRequestMessage {
+                return tiktoken_rs::ChatCompletionRequestMessage {
                     role: "system".to_string(),
                     content: self.#system_prompt_field.clone().unwrap(),
                     name: None
                 };
+            }
 
-                let user = tiktoken_rs::ChatCompletionRequestMessage {
+            fn create_user_prompt(&self, chunkable_field_content: String) -> tiktoken_rs::ChatCompletionRequestMessage {
+                return tiktoken_rs::ChatCompletionRequestMessage {
                     role: "user".to_string(),
-                    content: format!("{}, {}, {}: {}", self.#user_prompt_field.clone().unwrap(), #std_fields_fmt_template, stringify!(#cf_name), self.#cf_name.clone().unwrap()),
+                    content: format!("{}, {}, {}: {}", self.#user_prompt_field.clone().unwrap(), #std_fields_fmt_template, stringify!(#cf_name), chunkable_field_content),
                     name: None
                 };
+            }
 
-                Ok(vec![vec![system, user]])
+            fn build_chunked_prompt(
+                &self, 
+                model: &str, 
+                token_limit: i32,
+                maximum_chunk_count: i32,
+                chunk_field: #cf_type, 
+                prompt_string: String,
+                total_prompt_tokens: i32
+            ) -> Result<std::vec::Vec<std::vec::Vec<tiktoken_rs::ChatCompletionRequestMessage>>, Box<dyn std::error::Error>> {
+                let chunkable_field_tokens: i32 = get_prompt_tokens(model, &chunk_field)?.try_into()?;
+                let chunk_size_chars = get_chunk_size_chars(&prompt_string, chunkable_field_tokens, token_limit, maximum_chunk_count, total_prompt_tokens)?; 
+                let string_chunks = chunk_string(prompt_string, chunk_size_chars);
+
+                let prompts: Vec<Vec<tiktoken_rs::ChatCompletionRequestMessage>> = string_chunks
+                    .iter()
+                    .map(|c| {
+                        let mut prompt = vec![];
+                        let system = self.create_system_prompt();
+                        let user = self.create_user_prompt(c.clone());
+
+                        prompt.push(system);
+                        prompt.push(user);
+                        prompt
+                    })
+                    .collect();
+
+                Ok(prompts)
+            }
+
+            fn build_single_prompt(&self) -> std::vec::Vec<std::vec::Vec<tiktoken_rs::ChatCompletionRequestMessage>> {
+                let system = self.create_system_prompt();
+                let user = self.create_user_prompt(self.#cf_name.clone().unwrap());
+
+                vec![vec![system, user]]
             }
         }
 
-        impl #name {
+        impl #struct_name {
             fn builder() -> #builder_ident {
                 #builder_ident {
                     #(#fields_empty,)*
@@ -241,6 +222,31 @@ pub fn promptize(input: TokenStream) -> TokenStream {
                 chunk_size = total / num_chunks;
             }
             chunk_size
+        }
+
+        /// Gets the chunk sizes in chars so that text can be broken up on chars and not tokens
+        fn get_chunk_size_chars(
+            prompt_string: &String,
+            chunkable_field_tokens: i32, 
+            token_limit: i32, 
+            maximum_chunk_count: i32, 
+            total_prompt_tokens: i32
+        ) -> Result<i32, Box<dyn std::error::Error>> {
+            // this represents the tokens left after non chunkable fields are removed
+            // since non chunkable fields cannot be changed, this is our "real" limit
+            let chunkable_tokens_remaining = token_limit - (total_prompt_tokens - chunkable_field_tokens);
+            
+            let chunk_size_tokens = get_chunk_size_tokens(chunkable_field_tokens, chunkable_tokens_remaining);
+            let num_chunks: i32 = (chunkable_field_tokens as f64 / chunk_size_tokens as f64) as i32;
+
+            if num_chunks > maximum_chunk_count {
+                return Err("Number of chunks exceeds the maximum allowed chunk count".into());
+            }
+
+            let chunk_ratio = chunk_size_tokens as f64 / chunkable_field_tokens as f64;
+            let total_chars = prompt_string.chars().collect::<Vec<char>>().len();
+            let chunk_size_chars:i32 = (chunk_ratio * total_chars as f64).ceil() as i32;
+            Ok(chunk_size_chars)
         }
  
         /// Chunks up a string based on chunk_size which is number of chars not tokens
@@ -266,6 +272,23 @@ pub fn promptize(input: TokenStream) -> TokenStream {
     proc_macro::TokenStream::from(expanded)
 }
 
+fn get_fields(input_ast: &syn::DeriveInput, struct_name: &syn::Ident) -> Result<syn::punctuated::Punctuated<syn::Field, syn::token::Comma>, proc_macro::TokenStream> {
+    let fields = if let syn::Data::Struct(syn::DataStruct { 
+        fields: syn::Fields::Named(syn::FieldsNamed { 
+            ref named, 
+            ..
+        }), 
+        ..
+    }) = input_ast.data {
+        named 
+    } else {
+        let error = syn::Error::new(struct_name.span(), "Proc Macro only supports Structs");
+        return Err(error.to_compile_error().into());
+    };
+
+    Ok(fields.to_owned())
+}
+
 /// This returns all non-prompt fields and all non chunkable fields
 fn get_standard_fields(fields: syn::punctuated::Punctuated<syn::Field, syn::token::Comma>) -> Vec<syn::Field> {
     let fields = fields
@@ -284,7 +307,7 @@ fn get_standard_fields(fields: syn::punctuated::Punctuated<syn::Field, syn::toke
     return fields;
 }
 
-fn get_field_by_name(fields: syn::punctuated::Punctuated<syn::Field, syn::token::Comma>, field_name: &str) -> syn::Field {
+fn get_field_ident_by_name(struct_name: &syn::Ident, fields: syn::punctuated::Punctuated<syn::Field, syn::token::Comma>, field_name: &str) -> Result<Option<syn::Ident>, proc_macro::TokenStream> {
     let fields = fields
         .into_iter()
         .filter(|field| {
@@ -296,7 +319,17 @@ fn get_field_by_name(fields: syn::punctuated::Punctuated<syn::Field, syn::token:
         })
         .collect::<Vec<syn::Field>>();
 
-    return fields.first().ok_or(format!("No {} field supplied", field_name)).unwrap().to_owned();
+    if fields.len() == 0 {
+        let error = syn::Error::new(struct_name.span(), format!("Field: {} not found", field_name));
+        return Err(error.to_compile_error().into());
+    }
+
+    if fields.len() > 1 {
+        let error = syn::Error::new(struct_name.span(), format!("Field: {} found more than once", field_name));
+        return Err(error.to_compile_error().into());
+    }
+
+    return Ok(fields.first().unwrap().to_owned().ident);
 }
 
 fn validate_fields(struct_name: &syn::Ident, fields: syn::punctuated::Punctuated<syn::Field, syn::token::Comma>) -> Result<bool, proc_macro::TokenStream> {
@@ -379,5 +412,17 @@ fn get_option_type(field: &syn::Field) -> syn::Ident {
             }
         },
         _ => unimplemented!("Type not a path")
+    }
+}
+
+fn is_optional(field: &syn::Field) -> bool {
+    if let syn::Type::Path(t_path) = &field.ty {
+        let segments = &t_path.path.segments;
+        if segments.len() == 1 && segments[0].ident == "Option" {
+            return true
+        }
+        return false
+    } else {
+        panic!("unsupported type path")
     }
 }
