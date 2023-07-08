@@ -131,7 +131,7 @@ pub fn promptize(input: TokenStream) -> TokenStream {
                 maximum_chunk_count: i32
             ) -> anyhow::Result<std::vec::Vec<std::vec::Vec<tiktoken_rs::ChatCompletionRequestMessage>>> {
                 let prompt_string = serde_json::to_string(&self)?;
-                let total_prompt_tokens: i32 = get_prompt_tokens(model, &prompt_string)?.try_into()?;
+                let total_prompt_tokens: i32 = self.get_prompt_tokens(model, &prompt_string)?.try_into()?;
                 let chunk_field = self.#cf_name.clone().ok_or_else(|| anyhow::anyhow!(concat!(stringify!(#struct_name), " is not set")))?;
 
                 let prompts = match total_prompt_tokens > token_limit {
@@ -167,9 +167,9 @@ pub fn promptize(input: TokenStream) -> TokenStream {
                 prompt_string: String,
                 total_prompt_tokens: i32
             ) -> anyhow::Result<std::vec::Vec<std::vec::Vec<tiktoken_rs::ChatCompletionRequestMessage>>> {
-                let chunkable_field_tokens: i32 = get_prompt_tokens(model, &chunk_field)?.try_into()?;
-                let chunk_size_chars = get_chunk_size_chars(&prompt_string, chunkable_field_tokens, token_limit, maximum_chunk_count, total_prompt_tokens)?; 
-                let string_chunks = chunk_string(prompt_string, chunk_size_chars);
+                let chunkable_field_tokens: i32 = self.get_prompt_tokens(model, &chunk_field)?.try_into()?;
+                let chunk_size_chars = self.get_chunk_size_chars(&prompt_string, chunkable_field_tokens, token_limit, maximum_chunk_count, total_prompt_tokens)?; 
+                let string_chunks = self.chunk_string(prompt_string, chunk_size_chars);
 
                 let prompts: Vec<Vec<tiktoken_rs::ChatCompletionRequestMessage>> = string_chunks
                     .iter()
@@ -193,6 +193,64 @@ pub fn promptize(input: TokenStream) -> TokenStream {
 
                 vec![vec![system, user]]
             }
+            /// Gets the optimal chunk size in Tokens
+            fn get_chunk_size_tokens(&self, total: i32, limit: i32) -> i32 {
+                let num_chunks = (total as f64 / limit as f64).ceil() as i32;
+                let base_chunk_size = total / num_chunks;
+
+                let mut chunk_size = base_chunk_size;
+                let mut num_chunks = num_chunks;
+
+                while chunk_size > limit {
+                    num_chunks += 1; 
+                    chunk_size = total / num_chunks;
+                }
+                chunk_size
+            }
+
+            /// Gets the chunk sizes in chars so that text can be broken up on chars and not tokens
+            fn get_chunk_size_chars(
+                &self,
+                prompt_string: &String,
+                chunkable_field_tokens: i32, 
+                token_limit: i32, 
+                maximum_chunk_count: i32, 
+                total_prompt_tokens: i32
+            ) -> anyhow::Result<i32> {
+                // this represents the tokens left after non chunkable fields are removed
+                // since non chunkable fields cannot be changed, this is our "real" limit
+                let chunkable_tokens_remaining = token_limit - (total_prompt_tokens - chunkable_field_tokens);
+                
+                let chunk_size_tokens = self.get_chunk_size_tokens(chunkable_field_tokens, chunkable_tokens_remaining);
+                let num_chunks: i32 = (chunkable_field_tokens as f64 / chunk_size_tokens as f64) as i32;
+
+                if num_chunks > maximum_chunk_count {
+                    anyhow::bail!("Number of chunks exceeds the maximum allowed chunk count");
+                }
+
+                let chunk_ratio = chunk_size_tokens as f64 / chunkable_field_tokens as f64;
+                let total_chars = prompt_string.chars().collect::<Vec<char>>().len();
+                let chunk_size_chars:i32 = (chunk_ratio * total_chars as f64).ceil() as i32;
+                Ok(chunk_size_chars)
+            }
+     
+            /// Chunks up a string based on chunk_size which is number of chars not tokens
+            fn chunk_string(&self, prompt: String, chunk_size: i32) -> std::vec::Vec<String> {
+                let chunks = prompt
+                    .chars()
+                    .collect::<std::vec::Vec<char>>()
+                    .chunks(chunk_size as usize)
+                    .map(|c| c.iter().collect::<String>())
+                    .collect::<std::vec::Vec<String>>();
+
+                chunks
+            }
+
+            fn get_prompt_tokens(&self, model: &str, prompt: &str) -> anyhow::Result<usize> {
+                let bpe = tiktoken_rs::get_bpe_from_model(model)?;
+                let prompt_tokens = bpe.encode_with_special_tokens(prompt).len();
+                Ok(prompt_tokens)
+            }
         }
 
         impl #struct_name {
@@ -202,65 +260,6 @@ pub fn promptize(input: TokenStream) -> TokenStream {
                 }
             }
         }
-
-        /// Gets the optimal chunk size in Tokens
-        fn get_chunk_size_tokens(total: i32, limit: i32) -> i32 {
-            let num_chunks = (total as f64 / limit as f64).ceil() as i32;
-            let base_chunk_size = total / num_chunks;
-
-            let mut chunk_size = base_chunk_size;
-            let mut num_chunks = num_chunks;
-
-            while chunk_size > limit {
-                num_chunks += 1; 
-                chunk_size = total / num_chunks;
-            }
-            chunk_size
-        }
-
-        /// Gets the chunk sizes in chars so that text can be broken up on chars and not tokens
-        fn get_chunk_size_chars(
-            prompt_string: &String,
-            chunkable_field_tokens: i32, 
-            token_limit: i32, 
-            maximum_chunk_count: i32, 
-            total_prompt_tokens: i32
-        ) -> anyhow::Result<i32> {
-            // this represents the tokens left after non chunkable fields are removed
-            // since non chunkable fields cannot be changed, this is our "real" limit
-            let chunkable_tokens_remaining = token_limit - (total_prompt_tokens - chunkable_field_tokens);
-            
-            let chunk_size_tokens = get_chunk_size_tokens(chunkable_field_tokens, chunkable_tokens_remaining);
-            let num_chunks: i32 = (chunkable_field_tokens as f64 / chunk_size_tokens as f64) as i32;
-
-            if num_chunks > maximum_chunk_count {
-                anyhow::bail!("Number of chunks exceeds the maximum allowed chunk count");
-            }
-
-            let chunk_ratio = chunk_size_tokens as f64 / chunkable_field_tokens as f64;
-            let total_chars = prompt_string.chars().collect::<Vec<char>>().len();
-            let chunk_size_chars:i32 = (chunk_ratio * total_chars as f64).ceil() as i32;
-            Ok(chunk_size_chars)
-        }
- 
-        /// Chunks up a string based on chunk_size which is number of chars not tokens
-        fn chunk_string(prompt: String, chunk_size: i32) -> std::vec::Vec<String> {
-            let chunks = prompt
-                .chars()
-                .collect::<std::vec::Vec<char>>()
-                .chunks(chunk_size as usize)
-                .map(|c| c.iter().collect::<String>())
-                .collect::<std::vec::Vec<String>>();
-
-            chunks
-        }
-
-        fn get_prompt_tokens(model: &str, prompt: &str) -> anyhow::Result<usize> {
-            let bpe = tiktoken_rs::get_bpe_from_model(model)?;
-            let prompt_tokens = bpe.encode_with_special_tokens(prompt).len();
-            Ok(prompt_tokens)
-        }
-        
     };
 
     proc_macro::TokenStream::from(expanded)
