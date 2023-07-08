@@ -117,7 +117,7 @@ pub fn promptize(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         #[derive(serde::Serialize, Clone)]
-        struct #builder_ident {
+        pub struct #builder_ident {
             #(#template_fields),*
         }
         
@@ -129,13 +129,10 @@ pub fn promptize(input: TokenStream) -> TokenStream {
                 model: &str, 
                 token_limit: i32,
                 maximum_chunk_count: i32
-            ) -> Result<
-                std::vec::Vec<std::vec::Vec<tiktoken_rs::ChatCompletionRequestMessage>>, 
-                std::boxed::Box<dyn std::error::Error>
-            > {
+            ) -> anyhow::Result<std::vec::Vec<std::vec::Vec<tiktoken_rs::ChatCompletionRequestMessage>>> {
                 let prompt_string = serde_json::to_string(&self)?;
                 let total_prompt_tokens: i32 = get_prompt_tokens(model, &prompt_string)?.try_into()?;
-                let chunk_field = self.#cf_name.clone().ok_or(concat!(stringify!(#struct_name), " is not set"))?;
+                let chunk_field = self.#cf_name.clone().ok_or_else(|| anyhow::anyhow!(concat!(stringify!(#struct_name), " is not set")))?;
 
                 let prompts = match total_prompt_tokens > token_limit {
                     true => self.build_chunked_prompt(model, token_limit, maximum_chunk_count, chunk_field, prompt_string, total_prompt_tokens)?,
@@ -169,7 +166,7 @@ pub fn promptize(input: TokenStream) -> TokenStream {
                 chunk_field: #cf_type, 
                 prompt_string: String,
                 total_prompt_tokens: i32
-            ) -> Result<std::vec::Vec<std::vec::Vec<tiktoken_rs::ChatCompletionRequestMessage>>, Box<dyn std::error::Error>> {
+            ) -> anyhow::Result<std::vec::Vec<std::vec::Vec<tiktoken_rs::ChatCompletionRequestMessage>>> {
                 let chunkable_field_tokens: i32 = get_prompt_tokens(model, &chunk_field)?.try_into()?;
                 let chunk_size_chars = get_chunk_size_chars(&prompt_string, chunkable_field_tokens, token_limit, maximum_chunk_count, total_prompt_tokens)?; 
                 let string_chunks = chunk_string(prompt_string, chunk_size_chars);
@@ -199,7 +196,7 @@ pub fn promptize(input: TokenStream) -> TokenStream {
         }
 
         impl #struct_name {
-            fn builder() -> #builder_ident {
+            pub fn builder() -> #builder_ident {
                 #builder_ident {
                     #(#fields_empty,)*
                 }
@@ -228,7 +225,7 @@ pub fn promptize(input: TokenStream) -> TokenStream {
             token_limit: i32, 
             maximum_chunk_count: i32, 
             total_prompt_tokens: i32
-        ) -> Result<i32, Box<dyn std::error::Error>> {
+        ) -> anyhow::Result<i32> {
             // this represents the tokens left after non chunkable fields are removed
             // since non chunkable fields cannot be changed, this is our "real" limit
             let chunkable_tokens_remaining = token_limit - (total_prompt_tokens - chunkable_field_tokens);
@@ -237,7 +234,7 @@ pub fn promptize(input: TokenStream) -> TokenStream {
             let num_chunks: i32 = (chunkable_field_tokens as f64 / chunk_size_tokens as f64) as i32;
 
             if num_chunks > maximum_chunk_count {
-                return Err("Number of chunks exceeds the maximum allowed chunk count".into());
+                anyhow::bail!("Number of chunks exceeds the maximum allowed chunk count");
             }
 
             let chunk_ratio = chunk_size_tokens as f64 / chunkable_field_tokens as f64;
@@ -258,7 +255,7 @@ pub fn promptize(input: TokenStream) -> TokenStream {
             chunks
         }
 
-        fn get_prompt_tokens(model: &str, prompt: &str) -> Result<usize, std::boxed::Box<dyn std::error::Error>> {
+        fn get_prompt_tokens(model: &str, prompt: &str) -> anyhow::Result<usize> {
             let bpe = tiktoken_rs::get_bpe_from_model(model)?;
             let prompt_tokens = bpe.encode_with_special_tokens(prompt).len();
             Ok(prompt_tokens)

@@ -37,7 +37,7 @@ fn main() {
 ## Limitations
 1. Only 1 field can be "chunkable"
 2. A chunkable field has a limit to how many times it can be chunked to fit within the context limit
-3. There are some dependencies like tiktoken-rs and serde
+3. There are some dependencies like tiktoken-rs, serde, anyhow
 4. I chose to use tiktoken's prompt struct. It's up to you to map this back to whatever struct you're using
 
 ## Other considerations
