@@ -35,9 +35,6 @@ pub fn promptize(input: TokenStream) -> TokenStream {
     let cf_type = &chunk_field.ty;
 
     let standard_fields = get_standard_fields(fields.clone());
-    
-    // TODO: Figure out how the hell to put these into a function
-    // The return type is wild, no idea how to handle it
     let standard_fields_template = standard_fields.iter().map(|f| {
         let name = &f.ident;
         quote! {
