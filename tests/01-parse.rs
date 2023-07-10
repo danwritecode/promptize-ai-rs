@@ -9,6 +9,7 @@ pub struct FileContent {
     pub file_content: String
 }
 
+pub const MODEL:&str = "gpt-4";
 pub const TOKEN_CONTEXT_LIMIT:i32 = 8192;
 pub const MAX_CHUNKS:i32 = 5;
 
@@ -18,6 +19,8 @@ fn main() {
         .user_prompt(format!("You are a computer system that responds only in JSON format with no other words except for the JSON."))
         .filename("foo".to_string())
         .file_content("foo".to_string())
-        .build_prompt("gpt-4", TOKEN_CONTEXT_LIMIT, MAX_CHUNKS).unwrap(); 
+        .build()
+        .unwrap();
     
+    let res = res.build_prompt(MODEL, TOKEN_CONTEXT_LIMIT, MAX_CHUNKS).unwrap();
 }

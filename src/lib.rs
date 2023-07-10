@@ -53,7 +53,7 @@ pub fn promptize(input: TokenStream) -> TokenStream {
         });
 
     let std_fields_fmt_template = quote! {
-        format!(stringify!(#(#fmt_string_braces)*), #(self.#standard_fields_template.clone().unwrap()),*)
+        format!(stringify!(#(#fmt_string_braces)*), #(self.#standard_fields_template.clone()),*)
     };
 
     let user_prompt_field = match get_field_ident_by_name(struct_name, fields.clone(), USER_PROMPT_FIELD_NAME) {
@@ -92,6 +92,19 @@ pub fn promptize(input: TokenStream) -> TokenStream {
         }
     });
 
+    let build_fields = fields.iter().map(|f| {
+        let name = &f.ident;
+        if is_optional(&f) {
+            return quote! {
+                #name: self.#name.clone()
+            };
+        }
+
+        return quote! {
+            #name: self.#name.clone().ok_or(anyhow::anyhow!(concat!(stringify!(#name), " is not set")))?
+        };
+    });
+
     let builder_methods = fields.iter().map(|f| {
         let name = &f.ident;
         let ty = &f.ty;
@@ -124,6 +137,20 @@ pub fn promptize(input: TokenStream) -> TokenStream {
         impl #builder_ident {
             #(#builder_methods)*
 
+            pub fn build(&self) -> anyhow::Result<#struct_name> {
+                Ok(#struct_name {
+                    #(#build_fields,)*
+                })
+            }
+        }
+
+        impl #struct_name {
+            pub fn builder() -> #builder_ident {
+                #builder_ident {
+                    #(#fields_empty,)*
+                }
+            }
+
             pub fn build_prompt(
                 &self, 
                 model: &str, 
@@ -132,7 +159,7 @@ pub fn promptize(input: TokenStream) -> TokenStream {
             ) -> anyhow::Result<std::vec::Vec<std::vec::Vec<tiktoken_rs::ChatCompletionRequestMessage>>> {
                 let prompt_string = serde_json::to_string(&self)?;
                 let total_prompt_tokens: i32 = self.get_prompt_tokens(model, &prompt_string)?.try_into()?;
-                let chunk_field = self.#cf_name.clone().ok_or_else(|| anyhow::anyhow!(concat!(stringify!(#struct_name), " is not set")))?;
+                let chunk_field = self.#cf_name.clone();
 
                 let prompts = match total_prompt_tokens > token_limit {
                     true => self.build_chunked_prompt(model, token_limit, maximum_chunk_count, chunk_field, prompt_string, total_prompt_tokens)?,
@@ -145,7 +172,7 @@ pub fn promptize(input: TokenStream) -> TokenStream {
             fn create_system_prompt(&self) -> tiktoken_rs::ChatCompletionRequestMessage {
                 return tiktoken_rs::ChatCompletionRequestMessage {
                     role: "system".to_string(),
-                    content: self.#system_prompt_field.clone().unwrap(),
+                    content: self.#system_prompt_field.clone(),
                     name: None
                 };
             }
@@ -153,7 +180,7 @@ pub fn promptize(input: TokenStream) -> TokenStream {
             fn create_user_prompt(&self, chunkable_field_content: String) -> tiktoken_rs::ChatCompletionRequestMessage {
                 return tiktoken_rs::ChatCompletionRequestMessage {
                     role: "user".to_string(),
-                    content: format!("{}, {}, {}: {}", self.#user_prompt_field.clone().unwrap(), #std_fields_fmt_template, stringify!(#cf_name), chunkable_field_content),
+                    content: format!("{}, {}, {}: {}", self.#user_prompt_field.clone(), #std_fields_fmt_template, stringify!(#cf_name), chunkable_field_content),
                     name: None
                 };
             }
@@ -189,7 +216,7 @@ pub fn promptize(input: TokenStream) -> TokenStream {
 
             fn build_single_prompt(&self) -> std::vec::Vec<std::vec::Vec<tiktoken_rs::ChatCompletionRequestMessage>> {
                 let system = self.create_system_prompt();
-                let user = self.create_user_prompt(self.#cf_name.clone().unwrap());
+                let user = self.create_user_prompt(self.#cf_name.clone());
 
                 vec![vec![system, user]]
             }
@@ -233,7 +260,7 @@ pub fn promptize(input: TokenStream) -> TokenStream {
                 let chunk_size_chars:i32 = (chunk_ratio * total_chars as f64).ceil() as i32;
                 Ok(chunk_size_chars)
             }
-     
+
             /// Chunks up a string based on chunk_size which is number of chars not tokens
             fn chunk_string(&self, prompt: String, chunk_size: i32) -> std::vec::Vec<String> {
                 let chunks = prompt
@@ -250,14 +277,6 @@ pub fn promptize(input: TokenStream) -> TokenStream {
                 let bpe = tiktoken_rs::get_bpe_from_model(model)?;
                 let prompt_tokens = bpe.encode_with_special_tokens(prompt).len();
                 Ok(prompt_tokens)
-            }
-        }
-
-        impl #struct_name {
-            pub fn builder() -> #builder_ident {
-                #builder_ident {
-                    #(#fields_empty,)*
-                }
             }
         }
     };
