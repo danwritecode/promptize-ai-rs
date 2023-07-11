@@ -170,12 +170,21 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "proc-macro2",
+ "promptize_internals",
  "quote",
  "serde",
  "serde_json",
  "syn",
  "tiktoken-rs",
  "trybuild",
+]
+
+[[package]]
+name = "promptize_internals"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tiktoken-rs",
 ]
 
 [[package]]

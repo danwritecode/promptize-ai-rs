@@ -1,12 +1,17 @@
 use promptize::Promptize;
+use promptize_internals::Promptize;
 
 #[derive(Promptize, Debug, serde::Serialize)]
 pub struct FileContent {
     system_prompt: String,
     user_prompt: String,
-    pub filename: String,
+    filename: String,
     #[chunkable]
-    pub file_content: String
+    file_content: String,
+    #[model]
+    model: String,
+    #[max_chunks]
+    max_chunks: i32
 }
 
 pub const MODEL:&str = "gpt-4";
@@ -19,8 +24,11 @@ fn main() {
         .user_prompt(format!("You are a computer system that responds only in JSON format with no other words except for the JSON."))
         .filename("foo".to_string())
         .file_content("foo".to_string())
+        .model("gpt-4".to_string())
+        .max_chunks(5 as i32)
         .build()
         .unwrap();
     
-    let res = res.build_prompt(MODEL, TOKEN_CONTEXT_LIMIT, MAX_CHUNKS).unwrap();
+    let (res, file_content) = res.build_prompt().unwrap();
+    let foo = file_content.reassemble("AHHHH".to_string()).unwrap();
 }
