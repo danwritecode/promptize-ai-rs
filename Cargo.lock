@@ -182,6 +182,7 @@ dependencies = [
 [[package]]
 name = "promptize_internals"
 version = "0.1.0"
+source = "git+https://github.com/danwritecode/promptize-internals#a540c9e6143ecc0f891a7b751addbf8ed7493955"
 dependencies = [
  "anyhow",
  "tiktoken-rs",

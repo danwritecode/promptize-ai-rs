@@ -196,7 +196,7 @@ pub fn promptize(input: TokenStream) -> TokenStream {
                 let model_str = &self.#mf_name.clone();
                 let token_limit = promptize_internals::get_context_size(model_str);
 
-                println!("model: {} | token limit: {}", model_str, token_limit);
+                log::info!("model: {} | token limit: {}", model_str, token_limit);
 
                 let prompt_string = serde_json::to_string(&self)?;
                 let total_prompt_tokens: i32 = self.get_prompt_tokens(model_str, &prompt_string)?.try_into()?;
@@ -282,8 +282,10 @@ pub fn promptize(input: TokenStream) -> TokenStream {
 
                 vec![vec![system, user]]
             }
+
             /// Gets the optimal chunk size in Tokens
             fn get_chunk_size_tokens(&self, total: i32, limit: i32) -> i32 {
+                let limit = limit - 500;
                 let num_chunks = (total as f64 / limit as f64).ceil() as i32;
                 let base_chunk_size = total / num_chunks;
 
@@ -309,17 +311,23 @@ pub fn promptize(input: TokenStream) -> TokenStream {
                 // this represents the tokens left after non chunkable fields are removed
                 // since non chunkable fields cannot be changed, this is our "real" limit
                 let chunkable_tokens_remaining = token_limit - (total_prompt_tokens - chunkable_field_tokens);
+                log::info!("chunkable tokens remaining: {}", chunkable_tokens_remaining);
                 
                 let chunk_size_tokens = self.get_chunk_size_tokens(chunkable_field_tokens, chunkable_tokens_remaining);
+                log::info!("calculated chunk size tokens: {}", chunk_size_tokens);
+
                 let num_chunks: i32 = (chunkable_field_tokens as f64 / chunk_size_tokens as f64) as i32;
+                log::info!("calculated num chunks: {}", num_chunks);
 
                 if num_chunks > maximum_chunk_count {
                     anyhow::bail!("Number of chunks exceeds the maximum allowed chunk count");
                 }
 
                 let chunk_ratio = chunk_size_tokens as f64 / chunkable_field_tokens as f64;
+                log::info!("calculated chunk_ratio: {}", chunk_ratio);
                 let total_chars = prompt_string.chars().collect::<Vec<char>>().len();
                 let chunk_size_chars:i32 = (chunk_ratio * total_chars as f64).ceil() as i32;
+                log::info!("calculated chunk_size_chars: {}", chunk_size_chars);
                 Ok(chunk_size_chars)
             }
 
