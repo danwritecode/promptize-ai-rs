@@ -192,7 +192,7 @@ pub fn promptize(input: TokenStream) -> TokenStream {
 
             fn build_prompt(
                 self 
-            ) -> anyhow::Result<(std::vec::Vec<std::vec::Vec<tiktoken_rs::ChatCompletionRequestMessage>>, #struct_name)> {
+            ) -> anyhow::Result<(std::vec::Vec<std::vec::Vec<promptize_internals::ChatCompletionRequest>>, #struct_name)> {
                 let model_str = &self.#mf_name.clone();
                 let token_limit = promptize_internals::get_context_size(model_str);
 
@@ -213,7 +213,7 @@ pub fn promptize(input: TokenStream) -> TokenStream {
             fn reassemble(
                 &self, 
                 chunk_summary: String, 
-            ) -> anyhow::Result<(std::vec::Vec<std::vec::Vec<tiktoken_rs::ChatCompletionRequestMessage>>, #struct_name)> {
+            ) -> anyhow::Result<(std::vec::Vec<std::vec::Vec<promptize_internals::ChatCompletionRequest>>, #struct_name)> {
                 let prompt = #struct_name::builder()
                     #builder_chaining_hardcoded
                     #(#builder_chaining_std_fields)*
@@ -231,16 +231,16 @@ pub fn promptize(input: TokenStream) -> TokenStream {
                 }
             }
 
-            fn create_system_prompt(&self) -> tiktoken_rs::ChatCompletionRequestMessage {
-                return tiktoken_rs::ChatCompletionRequestMessage {
+            fn create_system_prompt(&self) -> promptize_internals::ChatCompletionRequest {
+                return promptize_internals::ChatCompletionRequest {
                     role: "system".to_string(),
                     content: self.#system_prompt_field.clone(),
                     name: None
                 };
             }
 
-            fn create_user_prompt(&self, chunkable_field_content: String) -> tiktoken_rs::ChatCompletionRequestMessage {
-                return tiktoken_rs::ChatCompletionRequestMessage {
+            fn create_user_prompt(&self, chunkable_field_content: String) -> promptize_internals::ChatCompletionRequest {
+                return promptize_internals::ChatCompletionRequest {
                     role: "user".to_string(),
                     content: format!("{}, {}, {}: {}", self.#user_prompt_field.clone(), #std_fields_fmt_template, stringify!(#cf_name), chunkable_field_content),
                     name: None
@@ -255,12 +255,12 @@ pub fn promptize(input: TokenStream) -> TokenStream {
                 chunk_field: #cf_type, 
                 prompt_string: String,
                 total_prompt_tokens: i32
-            ) -> anyhow::Result<std::vec::Vec<std::vec::Vec<tiktoken_rs::ChatCompletionRequestMessage>>> {
+            ) -> anyhow::Result<std::vec::Vec<std::vec::Vec<promptize_internals::ChatCompletionRequest>>> {
                 let chunkable_field_tokens: i32 = self.get_prompt_tokens(model, &chunk_field)?.try_into()?;
                 let chunk_size_chars = self.get_chunk_size_chars(&prompt_string, chunkable_field_tokens, token_limit, maximum_chunk_count, total_prompt_tokens)?; 
                 let string_chunks = self.chunk_string(prompt_string, chunk_size_chars);
 
-                let prompts: Vec<Vec<tiktoken_rs::ChatCompletionRequestMessage>> = string_chunks
+                let prompts: Vec<Vec<promptize_internals::ChatCompletionRequest>> = string_chunks
                     .iter()
                     .map(|c| {
                         let mut prompt = vec![];
@@ -276,7 +276,7 @@ pub fn promptize(input: TokenStream) -> TokenStream {
                 Ok(prompts)
             }
 
-            fn build_single_prompt(&self) -> std::vec::Vec<std::vec::Vec<tiktoken_rs::ChatCompletionRequestMessage>> {
+            fn build_single_prompt(&self) -> std::vec::Vec<std::vec::Vec<promptize_internals::ChatCompletionRequest>> {
                 let system = self.create_system_prompt();
                 let user = self.create_user_prompt(self.#cf_name.clone());
 
