@@ -52,6 +52,16 @@ fn create_prompt() -> Result<(Vec<Vec<ChatCompletionRequest>>, SomePrompt)> {
 }
 ```
 
+## Project Dependencies
+Your cargo.toml needs to have these two dependencies: 
+```
+promptize = { version ="0.2.0",  git = "https://github.com/danwritecode/promptize-ai-rs" }
+promptize_internals = { version ="0.1.0",  git = "https://github.com/danwritecode/promptize-internals" }
+
+```
+
+Perhaps in the future I can eliminate the need for the internals.
+
 ## Limitations
 1. Only 1 field can be "chunkable"
 2. A chunkable field has a limit to how many times it can be chunked to fit within the context limit
