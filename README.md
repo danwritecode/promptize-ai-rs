@@ -44,8 +44,8 @@ fn create_prompt() -> Result<(Vec<Vec<ChatCompletionRequest>>, SomePrompt)> {
         .user_prompt("User prompt here".to_string())
         .filename("huge_file.rs".to_string())
         .large_content("some huge amount of content here".to_string())
-        .model(prompt.model)
-        .max_chunks(prompt.max_chunks)
+        .model("gpt-4o")
+        .max_chunks(5)
         .build()?;
 
     Ok(prompt.build_prompt()?)
