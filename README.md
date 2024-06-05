@@ -1,6 +1,6 @@
 # Promptize
 
-Promptize attempts to solve the issues with context limits when working with AI systems. It allows a user to add an attribute to their struct called "Promptize" with a "chunkable" attribute on a specific field. 
+Promptize attempts to solve the issues with context limits when working with AI systems. It allows a user to add an attribute to their struct called "Promptize" with a "chunkable" attribute on a specific field, along with "model" and "max_chunks" attributes.
 
 If the prompt exceeds the allowable token size for your model, then the "chunkable" field will be chunked up into equal sized parts that fit within the context limit. 
 
@@ -18,19 +18,37 @@ pub struct SomePrompt {
     user_prompt: String,
     filename: String,
     #[chunkable]
-    large_content: String
+    large_content: String,
+    #[model]
+    model: String,
+    #[max_chunks]
+    max_chunks: i32
+
 }
 
-fn main() {
-    const TOKEN_CONTEXT_LIMIT:i32 = 8192;
-    const MAX_CHUNKS:i32 = 5;
+fn main() -> Result<()> {
+    // Completion model is your chunked request struct
+    // Prompt is your original struct that was built
+    let (completion_model, prompt) = create_prompt()?;
 
-    let foo = SomePrompt::builder()
+    if completion_model.len > 1 {
+        // do something now with your chunked model, like loop and call an LLM
+    }
+
+    Ok(())
+}
+
+fn create_prompt() -> Result<(Vec<Vec<ChatCompletionRequest>>, SomePrompt)> {
+    let prompt = SomePrompt::builder()
         .system_prompt("System prompt here".to_string())
         .user_prompt("User prompt here".to_string())
         .filename("huge_file.rs".to_string())
         .large_content("some huge amount of content here".to_string())
-        .build_prompt("gpt-4", TOKEN_CONTEXT_LIMIT, MAX_CHUNKS)?;
+        .model(prompt.model)
+        .max_chunks(prompt.max_chunks)
+        .build()?;
+
+    Ok(prompt.build_prompt()?)
 }
 ```
 
